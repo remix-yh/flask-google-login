@@ -1,9 +1,9 @@
-# Python standard libraries
+# Python標準ライブラリ
 import json
 import os
 import sqlite3
 
-# Third party libraries
+# サードパーティライブラリ
 from flask import Flask, redirect, request, url_for
 from flask_login import (
     LoginManager,
@@ -15,22 +15,23 @@ from flask_login import (
 from oauthlib.oauth2 import WebApplicationClient
 import requests
 
-# Internal imports
+# 内部インポート
 from db import init_db_command
 from user import User
 
-# Configuration
+# 設定情報
 GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID", None)
 GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET", None)
 GOOGLE_DISCOVERY_URL = (
     "https://accounts.google.com/.well-known/openid-configuration"
 )
 
-# Flask app setup
+# Flaskセットアップ
 app = Flask(__name__)
+#セッション情報を暗号化するためのキーを設定
 app.secret_key = os.environ.get("SECRET_KEY") or os.urandom(24)
 
-# User session management setup
+# ユーザセッション管理の設定
 # https://flask-login.readthedocs.io/en/latest
 login_manager = LoginManager()
 login_manager.init_app(app)
@@ -41,17 +42,16 @@ def unauthorized():
     return "You must be logged in to access this content.", 403
 
 
-# Naive database setup
+# データベースの初期化
 try:
     init_db_command()
 except sqlite3.OperationalError:
-    # Assume it's already been created
+    # すでに作成されている場合は、何もしない
     pass
 
-# OAuth2 client setup
+# OAuth2クライアント設定
 client = WebApplicationClient(GOOGLE_CLIENT_ID)
 
-# Flask-Login helper to retrieve a user from our db
 @login_manager.user_loader
 def load_user(user_id):
     return User.get(user_id)
@@ -74,12 +74,11 @@ def index():
 
 @app.route("/login")
 def login():
-    # Find out what URL to hit for Google login
+    # 認証用のエンドポイントを取得する
     google_provider_cfg = get_google_provider_cfg()
     authorization_endpoint = google_provider_cfg["authorization_endpoint"]
 
-    # Use library to construct the request for login and provide
-    # scopes that let you retrieve user's profile from Google
+    # ユーザプロファイルを取得するログイン要求
     request_uri = client.prepare_request_uri(
         authorization_endpoint,
         redirect_uri=request.base_url + "/callback",
@@ -90,15 +89,14 @@ def login():
 
 @app.route("/login/callback")
 def callback():
-    # Get authorization code Google sent back to you
+    # Googleから返却された認証コードを取得する
     code = request.args.get("code")
 
-    # Find out what URL to hit to get tokens that allow you to ask for
-    # things on behalf of a user
+    #トークンを取得するためのURLを取得する
     google_provider_cfg = get_google_provider_cfg()
     token_endpoint = google_provider_cfg["token_endpoint"]
 
-    # Prepare and send request to get tokens! Yay tokens!
+    # トークンを取得するための情報を生成し、送信する
     token_url, headers, body = client.prepare_token_request(
         token_endpoint,
         authorization_response=request.url,
@@ -112,19 +110,16 @@ def callback():
         auth=(GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET),
     )
 
-    # Parse the tokens!
+    # トークンをparse
     client.parse_request_body_response(json.dumps(token_response.json()))
 
-    # Now that we have tokens (yay) let's find and hit URL
-    # from Google that gives you user's profile information,
-    # including their Google Profile Image and Email
+    # トークンができたので、GoogleからURLを見つけてヒットした、
+    # Googleプロフィール画像やメールなどのユーザーのプロフィール情報を取得
     userinfo_endpoint = google_provider_cfg["userinfo_endpoint"]
     uri, headers, body = client.add_token(userinfo_endpoint)
     userinfo_response = requests.get(uri, headers=headers, data=body)
 
-    # We want to make sure their email is verified.
-    # The user authenticated with Google, authorized our
-    # app, and now we've verified their email through Google!
+    # メールが検証されていれば、名前、email、プロフィール画像を取得します
     if userinfo_response.json().get("email_verified"):
         unique_id = userinfo_response.json()["sub"]
         users_email = userinfo_response.json()["email"]
@@ -133,23 +128,22 @@ def callback():
     else:
         return "User email not available or not verified by Google.", 400
 
-    # Create a user in our db with the information provided
-    # by Google
+    # Googleから提供された情報をもとに、Userを生成する
     user = User(
         id_=unique_id, name=users_name, email=users_email, profile_pic=picture
     )
 
-    # Doesn't exist? Add to database
+    # 登録されていない場合は、データベースへ登録する
     if not User.get(unique_id):
         User.create(unique_id, users_name, users_email, picture)
 
-    # Begin user session by logging the user in
+    # ログインしてユーザーセッションを開始
     login_user(user)
 
-    # Send user back to homepage
     return redirect(url_for("index"))
 
 
+# @login_requiredデコレータは認証したいページに付ける
 @app.route("/logout")
 @login_required
 def logout():
